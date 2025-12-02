@@ -19,6 +19,7 @@ export interface DetectedTextElement {
   fontStyle: 'italic' | 'normal'; // New: Font style
   isTitle: boolean;
   alignment: 'left' | 'center' | 'right';
+  textShadowHex?: string;
 }
 
 export interface ProcessedImage {

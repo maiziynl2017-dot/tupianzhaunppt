@@ -13,7 +13,9 @@ CRITICAL INSTRUCTIONS:
 
 2. **CONTAINER DETECTION & COLORS**: 
    - **hasContainer**: Is the text inside a shape/box that overlays the background image? 
-   - **containerColor**: The EXACT Hex color of that box (e.g., #FFFFFF, #FFFDD0).
+   - **containerColor**: The EXACT Hex color of that box.
+     - **IMPORTANT - COLOR NORMALIZATION**: If the box looks White or Near-White (e.g., light gray, off-white), RETURN #FFFFFF. Do not return #F2F2F2 unless it is distinctly gray.
+     - If the box is semi-transparent, return the SOLID color (usually #FFFFFF or #000000) and set containerOpacity. DO NOT return the blended color of the background.
    - **containerOpacity**: Estimate opacity. 1.0 = solid, 0.5 = see-through, 0.0 = transparent.
    - **textColor**: The EXACT Hex color of the letters.
    - **strokeColor**: If text has a visible outline/border (common in memes/subtitles), return that Hex color.
@@ -22,6 +24,7 @@ CRITICAL INSTRUCTIONS:
    - **fontWeight**: Is the font Thick/Bold? Return 'bold'. Otherwise 'normal'.
    - **fontStyle**: Is the font Slanted/Italic? Return 'italic'. Otherwise 'normal'.
    - **fontFamily**: Match the vibe (serif, sans-serif, handwriting).
+   - **textShadowHex**: If the letters have a drop shadow, return the shadow color.
 
 4. **BOUNDING BOXES**: 
    - The box_2d must encompass the ENTIRE container if hasContainer=true.
@@ -37,7 +40,7 @@ const responseSchema: Schema = {
       text: { type: Type.STRING },
       box_2d: {
         type: Type.ARRAY,
-        items: { type: Type.INTEGER },
+        items: { type: Type.NUMBER }, // Changed from INTEGER to NUMBER for robustness
         description: "ymin, xmin, ymax, xmax (0-1000 scale)",
       },
       textColor: { type: Type.STRING, description: "Hex color code of the text" },
@@ -45,16 +48,24 @@ const responseSchema: Schema = {
       containerColor: { type: Type.STRING, description: "Hex color of the container if hasContainer is true", nullable: true },
       containerOpacity: { type: Type.NUMBER, description: "Opacity from 0.0 to 1.0", nullable: true },
       strokeColor: { type: Type.STRING, description: "Hex color of text outline if exists", nullable: true },
-      fontSize: { type: Type.INTEGER },
+      fontSize: { type: Type.NUMBER }, // Changed from INTEGER to NUMBER
       fontFamily: { type: Type.STRING, enum: ["serif", "sans-serif", "monospace", "handwriting"] },
       fontWeight: { type: Type.STRING, enum: ["bold", "normal"] },
       fontStyle: { type: Type.STRING, enum: ["italic", "normal"] },
       isTitle: { type: Type.BOOLEAN },
       alignment: { type: Type.STRING, enum: ["left", "center", "right"] },
+      textShadowHex: { type: Type.STRING, description: "Hex color of text shadow if exists", nullable: true },
     },
     required: ["text", "box_2d", "textColor", "hasContainer", "fontSize", "alignment", "fontWeight", "fontStyle"],
   },
 };
+
+const SAFETY_SETTINGS = [
+  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+];
 
 const fileToGenerativePart = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -92,11 +103,15 @@ export const analyzeImageLayout = async (
         responseMimeType: "application/json",
         responseSchema: responseSchema,
         temperature: 0.1,
+        safetySettings: SAFETY_SETTINGS, // Added safety settings
       }
     });
 
-    const jsonText = response.text;
-    if (!jsonText) throw new Error("Empty response from Gemini");
+    let jsonText = response.text;
+    if (!jsonText) throw new Error("Empty response from Gemini. The image might have triggered safety filters even with loose settings, or the model failed to generate text.");
+
+    // Sanitize JSON: remove markdown code blocks if present
+    jsonText = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
 
     const data = JSON.parse(jsonText) as DetectedTextElement[];
     return data;
@@ -123,13 +138,14 @@ export const removeTextFromImage = async (
       contents: {
         parts: [
           { inlineData: { mimeType: file.type, data: base64Data } },
-          { text: "Remove ALL text from this slide. Keep the background pattern, logos, diagrams, and illustrations exactly as they are. Do not change the art style. Just erase the letters." }
+          { text: "Strictly remove ALL text, captions, subtitles, and labels from this image. If text is inside a simple box, bubble, or banner that serves only as a text container, remove that container as well to leave a clean background. Ensure there are no 'ghost' letters or residual outlines. Fill the erased areas to match the surrounding texture and art style perfectly." }
         ],
       },
       config: {
         imageConfig: {
           aspectRatio: aspectRatio
-        }
+        },
+        safetySettings: SAFETY_SETTINGS, // Added safety settings
       }
     });
 

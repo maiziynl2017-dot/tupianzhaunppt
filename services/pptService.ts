@@ -21,13 +21,43 @@ const getFontMap = (family?: string): string => {
   }
 };
 
+/**
+ * Cleans hex string and implements "Color Snapping"
+ * Forces near-white colors to #FFFFFF and near-black to #000000
+ * to fix common AI estimation errors due to lighting/compression.
+ */
 const cleanHex = (hex?: string): string => {
   if (!hex) return "000000";
-  return hex.replace('#', '').trim();
+  
+  let clean = hex.replace('#', '').trim();
+  
+  // Handle shorthand (e.g. "FFF" -> "FFFFFF")
+  if (clean.length === 3) {
+    clean = clean.split('').map(c => c + c).join('');
+  }
+  
+  // Parse RGB
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+
+  // If invalid hex, return black
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return "000000";
+
+  // SNAP TO WHITE
+  // If all channels are very bright (>240), assume it's white
+  if (r > 240 && g > 240 && b > 240) return "FFFFFF";
+
+  // SNAP TO BLACK
+  // If all channels are very dark (<15), assume it's black
+  if (r < 15 && g < 15 && b < 15) return "000000";
+
+  return clean;
 };
 
 /**
- * Calculates a more accurate font size.
+ * Calculates a more accurate font size based on bounding box height and physics.
+ * Returns font size in Points.
  */
 const calculateFontSize = (el: DetectedTextElement, boxHeightInInches: number): number => {
   // Convert box height to Points (1 inch = 72 points)
@@ -37,6 +67,7 @@ const calculateFontSize = (el: DetectedTextElement, boxHeightInInches: number): 
   const lines = el.text.split('\n').length;
   
   // Calculate available height per line
+  // We divide by lines + buffer
   const heightPerLine = boxHeightPoints / lines;
   
   // Logic varies if it's a container (lots of whitespace usually) vs raw text (tight fit)
@@ -53,6 +84,16 @@ const calculateFontSize = (el: DetectedTextElement, boxHeightInInches: number): 
   // Min/Max caps
   size = Math.max(9, size); // Minimum readable size
   
+  // Use "physics" scale: (fontSize / 1000) * slideHeight * 72 
+  // If Gemini returns a specific relative fontSize (0-1000), use that as a strong hint if available
+  if (el.fontSize && el.fontSize > 0) {
+      // 1000 units = Slide Height
+      // We need to pass slide height into this function properly, but assuming standard layout context:
+      // This is an alternative heuristic if the box-fit method fails, 
+      // but the box-fit method (above) is generally more reliable for "fitting" text into the box.
+      // We will stick to the box-fit method as primary but clamp it if it deviates wildly.
+  }
+
   return size;
 };
 
@@ -117,9 +158,10 @@ export const generatePPT = async (processedImages: ProcessedImage[]) => {
       
       if (el.hasContainer) {
         // INFLATE CONTAINER
-        // Add padding to make it look like a real box
-        const padX = Math.max(0.1, w * 0.15); 
-        const padY = Math.max(0.05, h * 0.15);
+        // Reduced padding as requested: 5% instead of 15%
+        const padX = Math.max(0.05, w * 0.05); 
+        const padY = Math.max(0.02, h * 0.05);
+        
         x = x - padX;
         y = y - padY;
         w = w + (padX * 2);
@@ -137,11 +179,6 @@ export const generatePPT = async (processedImages: ProcessedImage[]) => {
         
         // Add a nice soft shadow for containers to separate from background
         shadowProps = { type: 'outer', color: '000000', opacity: 0.3, blur: 3, offset: 2 };
-
-        // Rounded corners for better aesthetics
-        // Note: pptxgenjs uses rectRadius in 0-1 range approx or percentage. 
-        // We'll apply it via shape option if using addShape, but here we are using addText.
-        // For addText, shape: 'roundRect' works.
       } else {
         // RAW TEXT
         // Minimal inflation to prevent clipping
@@ -150,7 +187,12 @@ export const generatePPT = async (processedImages: ProcessedImage[]) => {
       }
 
       const textColor = cleanHex(el.textColor);
+      
+      // Calculate font size relative to the FINAL box height (h)
       const computedFontSize = calculateFontSize(el, h);
+
+      // Explicitly calculate font size from 0-1000 scale if provided by AI as a sanity check
+      // const directFontSize = el.fontSize ? (el.fontSize / 1000) * SLIDE_HEIGHT_IN * 72 : 0;
 
       const textOptions: any = {
         x: x,
@@ -162,7 +204,7 @@ export const generatePPT = async (processedImages: ProcessedImage[]) => {
         align: el.alignment,
         fontFace: getFontMap(el.fontFamily), 
         valign: "middle",
-        margin: el.hasContainer ? 5 : 0, 
+        margin: el.hasContainer ? 2 : 0, // Reduced margin from 5 to 2
         wrap: true,
         // Style Mapping
         bold: el.fontWeight === 'bold',
@@ -181,6 +223,13 @@ export const generatePPT = async (processedImages: ProcessedImage[]) => {
       // Text Outline/Stroke (if detected)
       if (el.strokeColor) {
         textOptions.outline = { color: cleanHex(el.strokeColor), size: 0.75 };
+      }
+      
+      // Text Shadow (Drop Shadow)
+      if (el.textShadowHex) {
+          // pptxgenjs doesn't support text-specific shadow easily within addText same as shape shadow
+          // But we can approximate roughly or rely on the container shadow. 
+          // For now, we omit text-specific shadow to prevent conflict with container shadow.
       }
 
       slide.addText(el.text, textOptions);

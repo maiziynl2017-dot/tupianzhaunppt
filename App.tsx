@@ -16,7 +16,7 @@ const App: React.FC = () => {
   const [showKeyInput, setShowKeyInput] = useState(!process.env.API_KEY);
 
   const getApiKey = () => {
-    return process.env.API_KEY || userApiKey;
+    return (process.env.API_KEY || userApiKey).trim();
   };
 
   const handleFilesSelected = useCallback((files: File[]) => {

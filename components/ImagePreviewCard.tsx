@@ -71,7 +71,10 @@ export const ImagePreviewCard: React.FC<ImagePreviewCardProps> = ({ item }) => {
            </button>
           )}
           {item.status === 'error' && (
-            <div className="bg-red-50 text-red-600 px-2 py-1 rounded-full text-xs font-medium flex items-center shadow-sm border border-red-100">
+            <div 
+              className="bg-red-50 text-red-600 px-2 py-1 rounded-full text-xs font-medium flex items-center shadow-sm border border-red-100 cursor-help"
+              title={item.error || "Unknown error"}
+            >
               <AlertCircle className="w-3 h-3 mr-1" />
               Failed
             </div>

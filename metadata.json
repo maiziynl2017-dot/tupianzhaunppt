@@ -1,0 +1,5 @@
+{
+  "name": "Img2PPT - Smart Converter",
+  "description": "Convert images to editable PowerPoint slides using Gemini Vision AI. Preserves layout, detects text, and creates editable text boxes over the original image.",
+  "requestFramePermissions": []
+}
